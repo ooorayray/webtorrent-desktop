@@ -5,7 +5,8 @@ module.exports = {
   setAllowNav,
   onPlayerUpdate,
   onToggleAlwaysOnTop,
-  onToggleFullScreen
+  onToggleFullScreen,
+  onTorrentListViewChanged
 }
 
 const { app, Menu } = require('electron')
@@ -65,6 +66,12 @@ function onToggleAlwaysOnTop (flag) {
 
 function onToggleFullScreen (flag) {
   getMenuItem('Full Screen').checked = flag
+}
+
+// Keeps the View menu checkboxes in sync with the torrent list prefs
+function onTorrentListViewChanged ({ compact, favoritesOnly }) {
+  getMenuItem('Compact List').checked = !!compact
+  getMenuItem('Show Favorites Only').checked = !!favoritesOnly
 }
 
 function getMenuItem (label) {
@@ -159,6 +166,20 @@ function getMenuTemplate () {
           label: 'Float on Top',
           type: 'checkbox',
           click: () => windows.main.toggleAlwaysOnTop()
+        },
+        {
+          type: 'separator'
+        },
+        {
+          label: 'Compact List',
+          type: 'checkbox',
+          accelerator: 'CmdOrCtrl+Shift+L',
+          click: () => windows.main.dispatch('toggleCompactList')
+        },
+        {
+          label: 'Show Favorites Only',
+          type: 'checkbox',
+          click: () => windows.main.dispatch('toggleShowFavoritesOnly')
         },
         {
           type: 'separator'

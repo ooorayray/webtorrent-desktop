@@ -144,6 +144,9 @@ function onState (err, _state) {
   // Listen for messages from the main process
   setupIpc()
 
+  // Sync the View menu checkboxes with the saved torrent list view
+  controllers.torrentList().onTorrentListViewChanged(false)
+
   // Drag and drop files/text to start torrenting or seeding
   dragDrop('body', {
     onDrop: onOpen,
@@ -193,6 +196,9 @@ function delayedInit () {
 
   // Warn if the download dir is gone, eg b/c an external drive is unplugged
   checkDownloadPath()
+
+  // Give torrents added by older versions a "date added"
+  controllers.torrentList().backfillDateAdded()
 
   // ...window visibility state.
   document.addEventListener('webkitvisibilitychange', onVisibilityChange)
@@ -270,6 +276,18 @@ const dispatchHandlers = {
   saveTorrentFileAs: (torrentKey) =>
     controllers.torrentList().saveTorrentFileAs(torrentKey),
   prioritizeTorrent: (infoHash) => controllers.torrentList().prioritizeTorrent(infoHash),
+  retryTorrent: (infoHash) => controllers.torrentList().retryTorrent(infoHash),
+  restoreTorrentAfterPlayback: (infoHash) =>
+    controllers.torrentList().restoreTorrentAfterPlayback(infoHash),
+  toggleFavorite: (infoHash) => controllers.torrentList().toggleFavorite(infoHash),
+  toggleCompactList: () => controllers.torrentList().toggleCompactList(),
+  toggleShowFavoritesOnly: () => controllers.torrentList().toggleShowFavoritesOnly(),
+  setTorrentListSort: (sortBy) => controllers.torrentList().setTorrentListSort(sortBy),
+  setSearchQuery: (query) => {
+    if (query !== state.search.query) state.search.sortByColumn = false
+    state.search.query = query
+  },
+  focusSearch,
   resumePausedTorrents: () => controllers.torrentList().resumePausedTorrents(),
 
   // Playback
@@ -538,6 +556,11 @@ function onKeydown (e) {
 
   const key = e.key
 
+  if (key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (focusSearch()) e.preventDefault() // don't type the '/' into the box
+    return
+  }
+
   if (key === 'ArrowLeft') {
     dispatch('skip', -5)
   } else if (key === 'ArrowRight') {
@@ -561,6 +584,16 @@ function onKeydown (e) {
   }
 
   update()
+}
+
+// Focuses the torrent list search box. Returns false when it isn't shown,
+// eg. while playing a video
+function focusSearch () {
+  const input = document.querySelector('.header .search input')
+  if (!input) return false
+  input.focus()
+  input.select()
+  return true
 }
 
 function onFocus (e) {

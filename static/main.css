@@ -373,14 +373,14 @@ textarea,
   display: block;
 }
 
-.torrent .play {
+.torrent:not(.compact) .play {
   position: absolute;
   top: 23px;
   right: 45px;
   font-size: 55px;
 }
 
-.torrent .delete {
+.torrent:not(.compact) .delete {
   position: absolute;
   top: 38px;
   right: 12px;
@@ -417,6 +417,275 @@ textarea,
 
 .torrent:hover hr {
   display: block;
+}
+
+/*
+ * HEADER: SEARCH BOX
+ */
+
+.header .search {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: top;
+  height: 24px;
+  width: 220px;
+  margin-left: 10px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
+  font-weight: normal;
+  transition: background 0.1s ease-out, border-color 0.1s ease-out;
+}
+
+.header .search:focus-within {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.header .search .icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.header .search .search-icon {
+  opacity: 0.5;
+  margin-right: 4px;
+}
+
+.header .search input {
+  -webkit-app-region: no-drag;
+  -webkit-user-select: text;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+.header .search input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.header .search .shortcut-hint {
+  font-size: 11px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.header .search:focus-within .shortcut-hint {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .header .search {
+    width: 140px;
+  }
+}
+
+/* Files whose names match the search, in an expanded torrent */
+.torrent-details tr.search-match td.col-name {
+  color: #fc3;
+}
+
+/*
+ * TORRENT LIST: FAVORITES
+ */
+
+.header .nav.right .icon:not(:last-child) {
+  margin-right: 8px;
+}
+
+.header .favorites-only.active,
+.torrent .favorite.is-favorite {
+  color: #fc3;
+  opacity: 1;
+}
+
+.torrent .favorite {
+  font-size: 20px;
+}
+
+.torrent:not(.compact) .favorite {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  display: none;
+  text-shadow: rgba(0, 0, 0, 0.5) 0 0 4px;
+}
+
+.torrent.is-favorite:not(.compact) .metadata {
+  width: calc(100% - 60px);
+}
+
+.torrent:not(.compact):hover .favorite,
+.torrent:not(.compact) .favorite.is-favorite {
+  display: block;
+}
+
+.torrent .retry {
+  margin-left: 6px;
+  font-weight: bold;
+}
+
+.torrent-list-empty .icon {
+  font-size: 16px;
+  vertical-align: -3px;
+}
+
+/*
+ * TORRENT LIST: COMPACT VIEW
+ */
+
+.torrent-list.compact .torrent-placeholder {
+  height: 60px;
+}
+
+.torrent-compact-header,
+.torrent-compact-row {
+  display: grid;
+  grid-template-columns: 28px 32px minmax(80px, 1fr) 110px 110px 72px 104px 28px 28px;
+  align-items: center;
+  column-gap: 6px;
+  padding: 0 10px;
+}
+
+.torrent-compact-header {
+  height: 28px;
+  font-size: 12px;
+  color: #aaa;
+  background: rgb(35, 35, 35);
+  border-bottom: 1px solid #282828;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  user-select: none;
+}
+
+.torrent-compact-header .sortable:hover {
+  color: #fff;
+}
+
+.torrent-compact-header .sorted {
+  color: #fff;
+  font-weight: bold;
+}
+
+.torrent-compact-header .col {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.torrent-compact-header .sort-arrow {
+  font-size: 18px;
+}
+
+.torrent.compact {
+  background: none;
+  height: auto;
+  animation: none;
+}
+
+.torrent.compact:nth-child(even) {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.torrent.compact:hover,
+.torrent.compact.selected {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.torrent-compact-row {
+  height: 34px;
+  font-size: 13px;
+}
+
+.torrent-compact-row .col-name {
+  font-weight: bold;
+}
+
+.torrent-compact-row .col-status,
+.torrent-compact-row .col-progress,
+.torrent-compact-row .col-size,
+.torrent-compact-row .col-dateAdded {
+  color: #bbb;
+}
+
+.torrent-compact-row .status-downloading {
+  color: #8cf;
+}
+
+.torrent-compact-row .status-seeding {
+  color: #8d8;
+}
+
+.torrent-compact-row .status-error {
+  color: #f88;
+}
+
+.torrent-compact-row .speeds {
+  opacity: 0.8;
+  margin-left: 4px;
+}
+
+/* Icon cells fill the row height and center their icon both ways */
+.torrent-compact-row .col-play,
+.torrent-compact-row .col-remove,
+.torrent-compact-row .col-favorite,
+.torrent-compact-row .col-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+}
+
+.torrent-compact-row .icon {
+  line-height: 1;
+  display: block;
+}
+
+.torrent-compact-row .col-play .icon,
+.torrent-compact-row .col-remove .icon {
+  font-size: 20px;
+  visibility: hidden;
+}
+
+.torrent.compact:hover .col-play .icon,
+.torrent.compact:hover .col-remove .icon {
+  visibility: visible;
+}
+
+.torrent.compact .download {
+  margin-left: 0;
+}
+
+.torrent.compact .torrent-details {
+  padding: 4px 0 10px 0;
+}
+
+/* Narrow windows: drop the less important columns */
+@media (max-width: 640px) {
+  .torrent-compact-header,
+  .torrent-compact-row {
+    grid-template-columns: 28px 32px minmax(80px, 1fr) 96px 104px 28px 28px;
+  }
+
+  .torrent-compact-header .col-progress,
+  .torrent-compact-header .col-size,
+  .torrent-compact-row .col-progress,
+  .torrent-compact-row .col-size {
+    display: none;
+  }
 }
 
 /*

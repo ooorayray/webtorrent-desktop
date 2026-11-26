@@ -47,6 +47,10 @@ function getDefaultState () {
       title: config.APP_WINDOW_TITLE
     },
     selectedInfoHash: null, /* the torrent we've selected to view details. see state.torrents */
+    search: {
+      query: '', /* torrent list search box. Not saved: starts empty each run */
+      sortByColumn: false /* compact list: user clicked a column header while searching */
+    },
     playing: getDefaultPlayState(), /* the media (audio or video) that we're currently playing */
     devices: {}, /* playback devices like Chromecast and AppleTV */
     dock: {
@@ -132,7 +136,11 @@ function setupStateSaved () {
       autoAddTorrents: false,
       torrentsFolderPath: '',
       highestPlaybackPriority: true,
-      globalTrackers: defaultAnnounceList
+      globalTrackers: defaultAnnounceList,
+      torrentListView: 'default', /* 'default' or 'compact' */
+      torrentListSortBy: 'dateAdded', /* 'dateAdded', 'name', or 'status' */
+      torrentListSortDesc: true,
+      showFavoritesOnly: false
     },
     torrents: config.DEFAULT_TORRENTS.map(createTorrentObject),
     torrentsToResume: [],
@@ -173,7 +181,8 @@ function setupStateSaved () {
       magnetURI: parseTorrent.toMagnetURI(parsedTorrent),
       files: parsedTorrent.files,
       selections: parsedTorrent.files.map((x) => true),
-      testID: t.testID
+      testID: t.testID,
+      dateAdded: Date.now()
     }
   }
 }
@@ -260,6 +269,9 @@ async function saveImmediate (state, cb) {
         }
         if (key === 'error') {
           continue // Don't save error states
+        }
+        if (key === 'pausedBeforePlayback') {
+          continue // Transient: only meaningful while the player is open
         }
         torrent[key] = x[key]
       }

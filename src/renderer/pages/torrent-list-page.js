@@ -6,8 +6,9 @@ const LinearProgress = require('material-ui/LinearProgress').default
 
 const TorrentSummary = require('../lib/torrent-summary')
 const TorrentPlayer = require('../lib/torrent-player')
-const { dispatcher } = require('../lib/dispatcher')
+const { dispatch, dispatcher } = require('../lib/dispatcher')
 const { calculateEta } = require('../lib/time')
+const Search = require('../lib/search')
 
 module.exports = class TorrentList extends React.Component {
   render () {
@@ -25,10 +26,52 @@ module.exports = class TorrentList extends React.Component {
         </div>
       )
     }
-    const torrentElems = state.saved.torrents.map(
-      (torrentSummary) => this.renderTorrent(torrentSummary)
-    )
-    contents.push(...torrentElems)
+    const prefs = state.saved.prefs
+    const isCompact = prefs.torrentListView === 'compact'
+
+    let torrents = state.saved.torrents
+    if (prefs.showFavoritesOnly) {
+      torrents = torrents.filter((s) => s.favorite)
+      if (torrents.length === 0) {
+        contents.push(
+          <div key='no-favorites' className='torrent-list-empty'>
+            <p>No favorite torrents yet. Click the <i className='icon'>star_border</i> on
+              a torrent to add it to your favorites, or
+              {' '}<a href='#' onClick={dispatcher('toggleShowFavoritesOnly')}>show all torrents</a>.
+            </p>
+          </div>
+        )
+      }
+    }
+
+    // Search: filter by torrent and file names, best matches first
+    const query = state.search.query.trim()
+    const isSearching = query !== ''
+    const sortByRelevance = isSearching && !(isCompact && state.search.sortByColumn)
+    if (isSearching) {
+      const total = torrents.length
+      torrents = Search.searchTorrents(torrents, query)
+      if (total > 0 && torrents.length === 0) {
+        contents.push(
+          <div key='no-search-results' className='torrent-list-empty'>
+            <p>No torrents or files match “{query}”.
+              {' '}<a href='#' onClick={dispatcher('setSearchQuery', '')}>Clear search</a>
+            </p>
+          </div>
+        )
+      }
+    }
+
+    if (isCompact) {
+      if (!sortByRelevance) {
+        torrents = sortTorrents(torrents, prefs.torrentListSortBy, prefs.torrentListSortDesc)
+      }
+      if (torrents.length > 0) contents.push(this.renderCompactHeader(sortByRelevance))
+      contents.push(...torrents.map((s) => this.renderCompactTorrent(s)))
+    } else {
+      contents.push(...torrents.map((s) => this.renderTorrent(s)))
+    }
+
     contents.push(
       <div key='torrent-placeholder' className='torrent-placeholder'>
         <span className='ellipsis'>Drop a torrent file here or paste a magnet link</span>
@@ -38,7 +81,7 @@ module.exports = class TorrentList extends React.Component {
     return (
       <div
         key='torrent-list'
-        className='torrent-list'
+        className={'torrent-list' + (isCompact ? ' compact' : '')}
         onContextMenu={dispatcher('openTorrentListContextMenu')}
       >
         {contents}
@@ -64,6 +107,7 @@ module.exports = class TorrentList extends React.Component {
     const classes = ['torrent']
     if (isSelected) classes.push('selected')
     if (!infoHash) classes.push('disabled')
+    if (torrentSummary.favorite) classes.push('is-favorite')
     if (!torrentSummary.torrentKey) throw new Error('Missing torrentKey')
     return (
       <div
@@ -75,9 +119,128 @@ module.exports = class TorrentList extends React.Component {
         onClick={infoHash && dispatcher('toggleSelectTorrent', infoHash)}
       >
         {this.renderTorrentMetadata(torrentSummary)}
+        {infoHash ? renderFavoriteButton(torrentSummary) : null}
         {infoHash ? this.renderTorrentButtons(torrentSummary) : null}
         {isSelected ? this.renderTorrentDetails(torrentSummary) : null}
         <hr />
+      </div>
+    )
+  }
+
+  // Compact list: clickable column headers to sort by
+  renderCompactHeader (sortByRelevance) {
+    const prefs = this.props.state.saved.prefs
+    // While searching, rows are ranked by relevance until a column is clicked
+    const sortBy = sortByRelevance ? null : prefs.torrentListSortBy
+    const arrow = prefs.torrentListSortDesc ? 'arrow_drop_down' : 'arrow_drop_up'
+    const col = (key, label) => (
+      <div
+        key={key}
+        className={'col col-' + key + ' sortable' + (sortBy === key ? ' sorted' : '')}
+        onClick={dispatcher('setTorrentListSort', key)}
+        title={'Sort by ' + label.toLowerCase()}
+      >
+        {label}
+        {sortBy === key ? <i className='icon sort-arrow'>{arrow}</i> : null}
+      </div>
+    )
+    return (
+      <div key='compact-header' className='torrent-compact-header'>
+        <div className='col col-favorite' />
+        <div className='col col-toggle' />
+        {col('name', 'Name')}
+        {col('status', 'Status')}
+        <div className='col col-progress'>Progress</div>
+        <div className='col col-size'>Size</div>
+        {col('dateAdded', 'Date Added')}
+        <div className='col col-play' />
+        <div className='col col-remove' />
+      </div>
+    )
+  }
+
+  // Compact list: one torrent per line, no poster image
+  renderCompactTorrent (torrentSummary) {
+    const state = this.props.state
+    const infoHash = torrentSummary.infoHash
+    const isSelected = infoHash && state.selectedInfoHash === infoHash
+    if (!torrentSummary.torrentKey) throw new Error('Missing torrentKey')
+
+    const classes = ['torrent', 'compact']
+    if (isSelected) classes.push('selected')
+    if (!infoHash) classes.push('disabled')
+    if (torrentSummary.error) classes.push('error')
+
+    const name = torrentSummary.name || 'Loading torrent...'
+    const status = getListStatus(torrentSummary)
+    const prog = torrentSummary.progress
+    const percent = prog ? Math.floor(100 * prog.progress) + '%' : (torrentSummary.done ? '100%' : '')
+    const length = (prog && prog.length) || getTotalLength(torrentSummary)
+
+    let speeds = ''
+    if (prog && torrentSummary.status !== 'paused') {
+      if (prog.downloadSpeed > 0) speeds += ' ↓ ' + prettyBytes(prog.downloadSpeed) + '/s'
+      if (prog.uploadSpeed > 0) speeds += ' ↑ ' + prettyBytes(prog.uploadSpeed) + '/s'
+    }
+
+    let playButton
+    if (infoHash && !torrentSummary.error && TorrentPlayer.isPlayableTorrentSummary(torrentSummary)) {
+      playButton = (
+        <i
+          key='play-button'
+          title='Start streaming'
+          className='icon play'
+          onClick={dispatcher('playFile', infoHash)}
+        >
+          play_arrow
+        </i>
+      )
+    }
+
+    return (
+      <div
+        id={torrentSummary.testID && ('torrent-' + torrentSummary.testID)}
+        key={torrentSummary.torrentKey}
+        className={classes.join(' ')}
+        onContextMenu={infoHash && dispatcher('openTorrentContextMenu', infoHash)}
+        onClick={infoHash && dispatcher('toggleSelectTorrent', infoHash)}
+      >
+        <div className='torrent-compact-row'>
+          <div className='col col-favorite'>
+            {infoHash ? renderFavoriteButton(torrentSummary) : null}
+          </div>
+          <div className='col col-toggle'>
+            {infoHash && !torrentSummary.error ? renderTorrentCheckbox(torrentSummary) : null}
+          </div>
+          <div className='col col-name ellipsis' title={name}>{name}</div>
+          <div className={'col col-status ellipsis status-' + status.key}>
+            {status.label}
+            {torrentSummary.error ? renderRetryButton(torrentSummary) : null}
+          </div>
+          <div className='col col-progress ellipsis' title={speeds.trim()}>
+            {percent}{speeds ? <span className='speeds'>{speeds}</span> : null}
+          </div>
+          <div className='col col-size ellipsis'>{length ? prettyBytes(length) : ''}</div>
+          <div className='col col-dateAdded ellipsis' title={formatDate(torrentSummary.dateAdded, true)}>
+            {formatDate(torrentSummary.dateAdded)}
+          </div>
+          <div className='col col-play'>{playButton}</div>
+          <div className='col col-remove'>
+            {infoHash
+              ? (
+                <i
+                  key='delete-button'
+                  className='icon delete'
+                  title='Remove torrent'
+                  onClick={dispatcher('confirmDeleteTorrent', infoHash, false)}
+                >
+                  close
+                </i>
+                )
+              : null}
+          </div>
+        </div>
+        {isSelected ? this.renderTorrentDetails(torrentSummary) : null}
       </div>
     )
   }
@@ -120,25 +283,7 @@ module.exports = class TorrentList extends React.Component {
     return (<div key='metadata' className='metadata'>{elements}</div>)
 
     function renderDownloadCheckbox () {
-      const infoHash = torrentSummary.infoHash
-      const isActive = ['downloading', 'seeding'].includes(torrentSummary.status)
-      return (
-        <Checkbox
-          key='download-button'
-          className={'control download ' + torrentSummary.status}
-          style={{
-            display: 'inline-block',
-            width: 32
-          }}
-          iconStyle={{
-            width: 20,
-            height: 20
-          }}
-          checked={isActive}
-          onClick={stopPropagation}
-          onCheck={dispatcher('toggleTorrent', infoHash)}
-        />
-      )
+      return renderTorrentCheckbox(torrentSummary)
     }
 
     function renderProgressBar () {
@@ -276,6 +421,7 @@ module.exports = class TorrentList extends React.Component {
       filesElement = (
         <div key='files' className='files warning'>
           {message}
+          {torrentSummary.error ? renderRetryButton(torrentSummary) : null}
         </div>
       )
     } else {
@@ -290,7 +436,13 @@ module.exports = class TorrentList extends React.Component {
         fileRows = fileRows.sort((a, b) => collator.compare(a.file.name, b.file.name))
       }
 
-      fileRows = fileRows.map((obj) => this.renderFileRow(torrentSummary, obj.file, obj.index))
+      // While searching, highlight the files whose names match
+      const query = this.props.state.search.query.trim()
+      const match = query && Search.scoreTorrent(torrentSummary, query)
+      const matchedFiles = new Set(match ? match.matchedFiles : [])
+
+      fileRows = fileRows.map((obj) =>
+        this.renderFileRow(torrentSummary, obj.file, obj.index, matchedFiles.has(obj.index)))
 
       filesElement = (
         <div key='files' className='files'>
@@ -311,7 +463,7 @@ module.exports = class TorrentList extends React.Component {
   }
 
   // Show a single torrentSummary file in the details view for a single torrent
-  renderFileRow (torrentSummary, file, index) {
+  renderFileRow (torrentSummary, file, index, isSearchMatch) {
     // First, find out how much of the file we've downloaded
     // Are we even torrenting it?
     const isSelected = torrentSummary.selections && torrentSummary.selections[index]
@@ -350,7 +502,7 @@ module.exports = class TorrentList extends React.Component {
     if (!isSelected) rowClass = 'disabled' // File deselected, not being torrented
     if (!isDone && !isPlayable) rowClass = 'disabled' // Can't open yet, can't stream
     return (
-      <tr key={index} onClick={handleClick}>
+      <tr key={index} onClick={handleClick} className={isSearchMatch ? 'search-match' : ''}>
         <td className={'col-icon ' + rowClass}>
           {positionElem}
           <i className='icon'>{icon}</i>
@@ -405,10 +557,123 @@ function getErrorMessage (torrentSummary) {
   if (err === 'path-missing') {
     return (
       <span key='path-missing'>
-        Path missing.<br />
-        Fix and restart the app, or delete the torrent.
+        Download folder missing: {torrentSummary.path}<br />
+        Reconnect the drive, then {renderRetryButton(torrentSummary)}
       </span>
     )
   }
-  return 'Error'
+  return (
+    <span key='error'>
+      Error {renderRetryButton(torrentSummary)}
+    </span>
+  )
+}
+
+function renderRetryButton (torrentSummary) {
+  return (
+    <a
+      key='retry-button'
+      href='#'
+      className='retry'
+      title='Try to start this torrent again'
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        dispatch('retryTorrent', torrentSummary.infoHash)
+      }}
+    >
+      Retry
+    </a>
+  )
+}
+
+function renderTorrentCheckbox (torrentSummary) {
+  const infoHash = torrentSummary.infoHash
+  const isActive = ['downloading', 'seeding'].includes(torrentSummary.status)
+  return (
+    <Checkbox
+      key='download-button'
+      className={'control download ' + torrentSummary.status}
+      style={{
+        display: 'inline-block',
+        width: 32
+      }}
+      iconStyle={{
+        width: 20,
+        height: 20
+      }}
+      checked={isActive}
+      onClick={stopPropagation}
+      onCheck={dispatcher('toggleTorrent', infoHash)}
+    />
+  )
+}
+
+function renderFavoriteButton (torrentSummary) {
+  const isFavorite = !!torrentSummary.favorite
+  return (
+    <i
+      key='favorite-button'
+      className={'icon favorite' + (isFavorite ? ' is-favorite' : '')}
+      title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+      onClick={(e) => {
+        e.stopPropagation()
+        dispatch('toggleFavorite', torrentSummary.infoHash)
+      }}
+    >
+      {isFavorite ? 'star' : 'star_border'}
+    </i>
+  )
+}
+
+function isFinished (torrentSummary) {
+  if (torrentSummary.status === 'seeding') return true
+  const prog = torrentSummary.progress
+  if (prog && prog.ready) return prog.progress === 1
+  return !!torrentSummary.done
+}
+
+// Status shown in the compact list, and used to sort it.
+// group: 0 = downloading, 1 = unfinished (paused or errored), 2 = finished
+function getListStatus (torrentSummary) {
+  const s = torrentSummary
+  if (s.error === 'path-missing') return { key: 'error', label: 'Path missing', group: 1 }
+  if (s.error) return { key: 'error', label: 'Error', group: 1 }
+  const active = s.status !== 'paused'
+  if (isFinished(s)) {
+    return active
+      ? { key: 'seeding', label: 'Seeding', group: 2 }
+      : { key: 'finished', label: 'Finished', group: 2 }
+  }
+  if (active) {
+    const verifying = s.progress && !s.progress.ready
+    return { key: 'downloading', label: verifying ? 'Verifying' : 'Downloading', group: 0 }
+  }
+  return { key: 'paused', label: 'Unfinished', group: 1 }
+}
+
+const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+function sortTorrents (torrents, sortBy = 'dateAdded', desc = false) {
+  const byName = (a, b) => nameCollator.compare(a.name || '', b.name || '')
+  const compare = {
+    name: byName,
+    dateAdded: (a, b) => ((a.dateAdded || 0) - (b.dateAdded || 0)) || byName(a, b),
+    status: (a, b) => (getListStatus(a).group - getListStatus(b).group) || byName(a, b)
+  }[sortBy] || byName
+  const sorted = torrents.slice().sort(compare)
+  return desc ? sorted.reverse() : sorted
+}
+
+function getTotalLength (torrentSummary) {
+  if (!torrentSummary.files) return 0
+  return torrentSummary.files.reduce((sum, f) => sum + (f.length || 0), 0)
+}
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+
+function formatDate (timestamp, withTime) {
+  if (!timestamp) return withTime ? 'Date added unknown' : '—'
+  return (withTime ? dateTimeFormat : dateFormat).format(new Date(timestamp))
 }

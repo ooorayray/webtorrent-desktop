@@ -14,6 +14,14 @@ const instantIoRegex = /^(https:\/\/)?instant\.io\/#/
 module.exports = class TorrentListController {
   constructor (state) {
     this.state = state
+
+    // Torrent list view prefs were added after the config format was set, so
+    // fill in defaults for existing configs
+    const prefs = state.saved.prefs
+    if (!prefs.torrentListView) prefs.torrentListView = 'default'
+    if (!prefs.torrentListSortBy) prefs.torrentListSortBy = 'dateAdded'
+    if (prefs.torrentListSortDesc === undefined) prefs.torrentListSortDesc = true
+    if (prefs.showFavoritesOnly === undefined) prefs.showFavoritesOnly = false
   }
 
   // Adds a torrent to the list, starts downloading/seeding.
@@ -93,17 +101,27 @@ module.exports = class TorrentListController {
     // New torrent: metadata not yet received
     if (!fileOrFolder) return start()
 
-    // Existing torrent: check that the path is still there
+    // Existing torrent: check that the path is still there.
+    //
+    // Only refuse to start when the download *folder* itself is gone (eg. an
+    // external drive is unplugged), since starting then would fail or write
+    // to the wrong place. If the folder exists but the torrent's own file or
+    // subfolder doesn't, WebTorrent simply (re)creates it, exactly like
+    // removing and re-adding the .torrent would. That case used to be flagged
+    // as "path missing" too, eg. for torrents that were paused before any data
+    // was written to disk, or whose data was moved/deleted.
     fs.stat(fileOrFolder, err => {
-      if (err) {
+      if (!err) return start()
+      fs.stat(s.path, (err, stat) => {
+        if (!err && stat.isDirectory()) return start()
+        console.error('Path missing for torrent %s: %s', s.infoHash, s.path)
         s.error = 'path-missing'
-        dispatch('backToList')
-        return
-      }
-      start()
+        dispatch('backToList') // eg. if we were trying to stream it
+      })
     })
 
     function start () {
+      if (s.error === 'path-missing') delete s.error
       ipcRenderer.send('wt-start-torrenting',
         s.torrentKey,
         TorrentSummary.getTorrentId(s),
@@ -120,6 +138,16 @@ module.exports = class TorrentListController {
   // TODO: use torrentKey, not infoHash
   toggleTorrent (infoHash) {
     const torrentSummary = TorrentSummary.getByKey(this.state, infoHash)
+
+    // The user made an explicit choice, so don't undo it when the player closes
+    delete torrentSummary.pausedBeforePlayback
+
+    // A torrent stuck on "path missing" was never actually started, so
+    // toggling it should try again rather than pause it
+    if (torrentSummary.error === 'path-missing') {
+      return this.retryTorrent(infoHash)
+    }
+
     if (torrentSummary.status === 'paused') {
       torrentSummary.status = 'new'
       this.startTorrentingSummary(torrentSummary.torrentKey)
@@ -128,6 +156,92 @@ module.exports = class TorrentListController {
     }
 
     this.pauseTorrent(torrentSummary, true)
+  }
+
+  // Clears an error (eg. "path missing") and tries to start the torrent again
+  retryTorrent (infoHash) {
+    const torrentSummary = TorrentSummary.getByKey(this.state, infoHash)
+    if (!torrentSummary) throw new TorrentKeyNotFoundError(infoHash)
+    delete torrentSummary.error
+    delete torrentSummary.pausedBeforePlayback
+    ipcRenderer.send('wt-stop-torrenting', torrentSummary.infoHash)
+    torrentSummary.status = 'new'
+    this.startTorrentingSummary(torrentSummary.torrentKey)
+    sound.play('ENABLE')
+  }
+
+  // Called when the player closes. If a torrent was only started so that it
+  // could be streamed, put it back the way the user left it.
+  restoreTorrentAfterPlayback (infoHash) {
+    const torrentSummary = TorrentSummary.getByKey(this.state, infoHash)
+    if (!torrentSummary || !torrentSummary.pausedBeforePlayback) return
+    delete torrentSummary.pausedBeforePlayback
+    if (torrentSummary.status !== 'paused') this.pauseTorrent(torrentSummary, false)
+    dispatch('stateSave')
+  }
+
+  toggleFavorite (infoHash) {
+    const torrentSummary = TorrentSummary.getByKey(this.state, infoHash)
+    if (!torrentSummary) throw new TorrentKeyNotFoundError(infoHash)
+    torrentSummary.favorite = !torrentSummary.favorite
+    dispatch('stateSave')
+  }
+
+  toggleCompactList () {
+    const prefs = this.state.saved.prefs
+    prefs.torrentListView = prefs.torrentListView === 'compact' ? 'default' : 'compact'
+    this.onTorrentListViewChanged()
+  }
+
+  toggleShowFavoritesOnly () {
+    const prefs = this.state.saved.prefs
+    prefs.showFavoritesOnly = !prefs.showFavoritesOnly
+    this.onTorrentListViewChanged()
+  }
+
+  // Click a column header: sort by it, or flip the direction if already sorted by it
+  setTorrentListSort (sortBy) {
+    const prefs = this.state.saved.prefs
+    // While searching, results are ordered by relevance until a column is clicked
+    const search = this.state.search
+    if (search.query.trim() && !search.sortByColumn) {
+      search.sortByColumn = true
+      if (prefs.torrentListSortBy === sortBy) return
+    }
+
+    if (prefs.torrentListSortBy === sortBy) {
+      prefs.torrentListSortDesc = !prefs.torrentListSortDesc
+    } else {
+      prefs.torrentListSortBy = sortBy
+      // Newest first for dates, A-Z for names, active first for status
+      prefs.torrentListSortDesc = sortBy === 'dateAdded'
+    }
+    dispatch('stateSaveImmediate')
+  }
+
+  // Syncs the View menu checkboxes, and saves the pref unless told not to.
+  // Saves immediately (like the Preferences page) rather than debounced, so
+  // the view survives even if the app is killed right after toggling.
+  onTorrentListViewChanged (save = true) {
+    const prefs = this.state.saved.prefs
+    ipcRenderer.send('onTorrentListViewChanged', {
+      compact: prefs.torrentListView === 'compact',
+      favoritesOnly: !!prefs.showFavoritesOnly
+    })
+    if (save) dispatch('stateSaveImmediate')
+  }
+
+  // Torrents added before "date added" was tracked: use the time the .torrent
+  // file was saved to the app's config folder as a best guess
+  backfillDateAdded () {
+    const missing = this.state.saved.torrents.filter((s) => !s.dateAdded && s.torrentFileName)
+    let remaining = missing.length
+    missing.forEach((s) => {
+      fs.stat(TorrentSummary.getTorrentPath(s), (err, stat) => {
+        if (!err) s.dateAdded = Math.round(stat.birthtimeMs || stat.mtimeMs)
+        if (--remaining === 0) dispatch('stateSave')
+      })
+    })
   }
 
   pauseAllTorrents () {
@@ -143,6 +257,7 @@ module.exports = class TorrentListController {
 
   resumeAllTorrents () {
     this.state.saved.torrents.forEach((torrentSummary) => {
+      delete torrentSummary.pausedBeforePlayback
       if (torrentSummary.status === 'paused') {
         torrentSummary.status = 'downloading'
         this.startTorrentingSummary(torrentSummary.torrentKey)
@@ -256,6 +371,22 @@ module.exports = class TorrentListController {
   openTorrentContextMenu (infoHash) {
     const torrentSummary = TorrentSummary.getByKey(this.state, infoHash)
     const menu = new remote.Menu()
+
+    menu.append(new remote.MenuItem({
+      label: torrentSummary.favorite ? 'Remove from Favorites' : 'Add to Favorites',
+      click: () => dispatch('toggleFavorite', torrentSummary.infoHash)
+    }))
+
+    if (torrentSummary.error) {
+      menu.append(new remote.MenuItem({
+        label: 'Retry',
+        click: () => dispatch('retryTorrent', torrentSummary.infoHash)
+      }))
+    }
+
+    menu.append(new remote.MenuItem({
+      type: 'separator'
+    }))
 
     menu.append(new remote.MenuItem({
       label: 'Remove From List',

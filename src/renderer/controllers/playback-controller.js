@@ -251,6 +251,10 @@ module.exports = class PlaybackController {
     const state = this.state
 
     if (torrentSummary.status === 'paused') {
+      // Streaming needs the torrent to be running, but the user had it
+      // paused (eg. "Not seeding"). Remember that, so we can pause it again
+      // when the player closes instead of leaving it seeding.
+      torrentSummary.pausedBeforePlayback = true
       dispatch('startTorrentingSummary', torrentSummary.torrentKey)
       ipcRenderer.once('wt-ready-' + torrentSummary.infoHash,
         () => onTorrentReady())
@@ -354,6 +358,10 @@ module.exports = class PlaybackController {
 
     if (!state.playing.isReady) telemetry.logPlayAttempt('abandoned') // user gave up waiting
 
+    // Respect the torrent's seeding toggle: if it was paused before we started
+    // streaming it, pause it again
+    const playedInfoHash = state.playing.infoHash
+
     // Reset the window contents back to the home screen
     state.playing = State.getDefaultPlayState()
     state.server = null
@@ -373,6 +381,8 @@ module.exports = class PlaybackController {
     if (this.state.saved.prefs.highestPlaybackPriority) {
       dispatch('resumePausedTorrents')
     }
+
+    if (playedInfoHash) dispatch('restoreTorrentAfterPlayback', playedInfoHash)
 
     this.update()
   }
