@@ -9,6 +9,7 @@ const Playlist = require('../lib/playlist')
 const { dispatch, dispatcher } = require('../lib/dispatcher')
 const config = require('../../config')
 const { calculateEta } = require('../lib/time')
+const PreviewFrames = require('../lib/preview-frames')
 
 // Shows a streaming video player. Standard features + Chromecast + Airplay
 module.exports = class Player extends React.Component {
@@ -817,6 +818,7 @@ function renderPlayerControls (state) {
 
   function clearPreview () {
     if (state.playing.type !== 'video') return
+    PreviewFrames.hide()
     dispatch('clearPreview')
   }
 
@@ -882,9 +884,10 @@ function renderPreview (state) {
   const height = 70
   let width = 0
 
+  // The hidden <video> decodes frames; the canvas shows cached thumbnails
   const previewEl = document.querySelector('video#preview')
   if (previewEl !== null && previewXCoord !== null) {
-    previewEl.currentTime = time
+    PreviewFrames.show(previewEl, time)
 
     // Auto adjust width to maintain video aspect ratio
     width = Math.floor((previewEl.videoWidth / previewEl.videoHeight) * height)
@@ -904,10 +907,17 @@ function renderPreview (state) {
       }}
     >
       <div style={{ width, height, backgroundColor: 'black' }}>
+        <canvas
+          id='preview-canvas'
+          style={{ width, height, display: 'block', border: '1px solid lightgrey', borderRadius: 2 }}
+        />
         <video
           src={Playlist.getCurrentLocalURL(state)}
           id='preview'
-          style={{ border: '1px solid lightgrey', borderRadius: 2 }}
+          muted
+          preload='metadata'
+          // Kept rendered (not display: none) so the browser still decodes frames
+          style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
         />
       </div>
       <p
