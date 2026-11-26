@@ -511,8 +511,9 @@ function onOpen (files) {
   const allSubtitles = files.every(controllers.subtitles().isSubtitle)
 
   if (allTorrents) {
-    // Drop torrents onto the app: go to home screen, add torrents, no matter what
-    dispatch('backToList')
+    // Drop or open torrents: add them. Go to the home screen to show them,
+    // unless something is playing: then add them silently in the background
+    if (url !== 'player') dispatch('backToList')
     // All .torrent files? Add them.
     files.forEach((file) => controllers.torrentList().addTorrent(file))
   } else if (url === 'player' && allSubtitles) {

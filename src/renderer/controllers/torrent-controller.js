@@ -30,7 +30,8 @@ module.exports = class TorrentController {
         dateAdded: Date.now()
       }
       torrents.unshift(torrentSummary)
-      sound.play('ADD')
+      // Torrents added while a video plays are added silently
+      if (this.state.location.url() !== 'player') sound.play('ADD')
     }
 
     torrentSummary.infoHash = infoHash

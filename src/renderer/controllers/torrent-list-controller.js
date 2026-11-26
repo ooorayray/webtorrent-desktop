@@ -47,7 +47,13 @@ module.exports = class TorrentListController {
 
     ipcRenderer.send('wt-start-torrenting', torrentKey, torrentId, path)
 
-    dispatch('backToList')
+    if (this.state.location.url() === 'player') {
+      // Don't interrupt the video: add it silently, just close eg. the
+      // "Open Torrent Address" dialog if that's how it was added
+      this.state.modal = null
+    } else {
+      dispatch('backToList')
+    }
   }
 
   // Shows the Create Torrent page with options to seed a given file or folder
@@ -116,7 +122,12 @@ module.exports = class TorrentListController {
         if (!err && stat.isDirectory()) return start()
         console.error('Path missing for torrent %s: %s', s.infoHash, s.path)
         s.error = 'path-missing'
-        dispatch('backToList') // eg. if we were trying to stream it
+        // If we were trying to stream this torrent, leave the player. Don't
+        // interrupt playback of some other torrent though.
+        const state = this.state
+        if (state.location.url() !== 'player' || state.playing.infoHash === s.infoHash) {
+          dispatch('backToList')
+        }
       })
     })
 
